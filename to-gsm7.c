@@ -5,6 +5,8 @@
 
 int main(int argc, char **argv);
 int command_options(int argc, char **argv);
+int ucs2_to_gsm7(char *hexString, int len, char *str);
+int gsm7_to_ud(char *str, int curChar, char *out7bit);
 int parse_input(char *hexString);
 
 int main(int argc, char **argv)
@@ -46,19 +48,16 @@ int command_options(int argc, char **argv)
 	}
 }
 
-int parse_input(char *hexString)
+int ucs2_to_gsm7(char *hexString, int len, char *str)
 {
 	int i, j;
-	int len = strlen(hexString) / 4;
-	char str[strlen(hexString)];
-	memset(str, 0, strlen(hexString));
 	char cur[7];
 	cur[0] = '0';
 	cur[1] = 'x';
 	cur[6] = '\0';
 	int num;
 	int curChar = 0;
-	int isGsm = 1;
+
 	for (i = 0; i < len; i++)
 	{
 		j = i * 4;
@@ -176,7 +175,7 @@ int parse_input(char *hexString)
 					break;
 				default:
 //					fprintf(stderr, "Error: Number %s is out of range - only UCS-2 and GSM 7-bit identical characters supported.\n", cur);
-					isGsm = 0;
+					return -1;
 			}
 //			exit(1);
 		}
@@ -201,36 +200,15 @@ int parse_input(char *hexString)
 	}
 	printf("\n");
 	printf("%s\n", str);
+	return curChar;
 
-	printf("SMSC: TODO\n");
-	printf("PDU-Header: TODO\n");
-	printf("TP-MTI: TODO\n");
-	printf("TP-MMS: TODO\n");
-	printf("TP-SRI: TODO\n");
-	printf("TP-RP: TODO\n");
-	printf("TP-UDHI: TODO\n");
-	printf("TP-OA: TODO\n");
-	printf("TP-PID: 0x00\n");
+}
 
-	if (isGsm == 1) {
-		printf("7-bit GSM\n");
-		printf("TP-DCS: 0x00\n");
-	} else {
-		printf("UCS-2\n");
-		printf("TP-DCS: 0x08\n");
-	}
-
-	printf("TP-SCTS: TODO\n");
-
+int gsm7_to_ud(char *str, int curChar, char *out7bit)
+{
+	int i = 0;
+	int j = 0;
 	int shiftAt = 0;
-	if (isGsm != 1) {
-		printf("TP-UDL: 0x%02X\n", strlen(hexString) / 2);
-		printf("TP-UD: 0x%s\n", hexString);
-		return 0;
-	}
-	char out7bit[curChar];
-	memset(out7bit, 0, curChar);
-	j = 0;
 	for (i = 0; i < curChar; i++) {
 		if ((i > 0) && (i + 1) % 8 == 0) {
 			shiftAt = 0;
@@ -249,12 +227,48 @@ int parse_input(char *hexString)
 		shiftAt++;
 		j++;
 	}
-	printf("TP-UDL: 0x%02X\n", len);
-	printf("TP-UD: 0x");
-	for (i = 0; i < j; i++) {
-		printf("%02X", out7bit[i]);
-	}
-	printf("\n");
+	return j;
+}
 
+
+int parse_input(char *hexString)
+{
+	int i, j;
+	int len = strlen(hexString) / 4;
+	char str[strlen(hexString)];
+	memset(str, 0, strlen(hexString));
+	int curChar = ucs2_to_gsm7(hexString, len, str);
+
+	printf("SMSC: TODO\n");
+	printf("PDU-Header: TODO\n");
+	printf("TP-MTI: TODO\n");
+	printf("TP-MMS: TODO\n");
+	printf("TP-SRI: TODO\n");
+	printf("TP-RP: TODO\n");
+	printf("TP-UDHI: TODO\n");
+	printf("TP-OA: TODO\n");
+	printf("TP-PID: 0x00\n");
+
+	if (curChar == -1) {
+		printf("UCS-2\n");
+		printf("TP-DCS: 0x08\n");
+		printf("TP-SCTS: TODO\n");
+		printf("TP-UDL: 0x%02X\n", len * 2);
+		printf("TP-UD: 0x%s\n", hexString);
+		return 0;
+	} else {
+		char out7bit[curChar];
+		memset(out7bit, 0, curChar);
+		printf("7-bit GSM\n");
+		printf("TP-DCS: 0x00\n");
+		printf("TP-SCTS: TODO\n");
+		j = gsm7_to_ud(str, curChar, out7bit);
+		printf("TP-UDL: 0x%02X\n", len);
+		printf("TP-UD: 0x");
+		for (i = 0; i < j; i++) {
+			printf("%02X", out7bit[i]);
+		}
+		printf("\n");
+	}
 
 }
