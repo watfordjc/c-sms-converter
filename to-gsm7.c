@@ -2,16 +2,86 @@
 #include <getopt.h>
 #include <string.h>
 #include <stdlib.h>
+/* libconfig */
+#include <libconfig.h>
 
 int main(int argc, char **argv);
 int command_options(int argc, char **argv);
+void open_config();
+void parse_config();
+void close_config();
+
+int get_root_element_count(config_t *config, char *name, config_setting_t *config_element);
+int get_element_count(config_setting_t *config, char *name, config_setting_t *config_element);
+int get_config_int(config_setting_t *setting, char *name);
+int get_config_bool(config_setting_t *setting, char *name);
+const char *get_config_string(config_setting_t *setting, char *name);
+
 int ucs2_to_gsm7(char *hexString, int len, char *str);
 int gsm7_to_ud(char *str, int curChar, char *out7bit);
 int parse_input(char *hexString);
 
+char *CONFIG_FILE = "";
+struct config_t conf;
+struct config_t *config;
+
 int main(int argc, char **argv)
 {
 	command_options(argc, argv);
+	open_config();
+	parse_config();
+	close_config();
+}
+
+void open_config()
+{
+	if (strlen(CONFIG_FILE) == 0)
+	{
+		fprintf(stderr, "No configuration file specified.\n");
+		exit(1);
+	}
+
+	config = &conf;
+	config_init(config);
+
+	int loaded_config = config_read_file(config, CONFIG_FILE);
+	if (loaded_config != 1)
+	{
+		fprintf(stderr, "Error reading config file %s. Error on line %d: %s\n", config_error_file(config), config_error_line(config), config_error_text(config));
+		config_destroy(config);
+	}
+}
+
+void parse_config()
+{
+	struct config_setting_t conf_mysql;
+	struct config_setting_t *config_mysql = &conf_mysql;
+	int mysql_count = get_root_element_count(config, "mysql", config_mysql);
+	if (mysql_count != 1) {
+		fprintf(stderr, "Configuration file contains %d mysql configurations. Number of configurations must be 1.\n", mysql_count);
+		close_config();
+		exit(1);
+	}
+	const char *host = NULL;
+	const char *user = NULL;
+	const char *passwd = NULL;
+	const char *db = NULL;
+	unsigned int port = 0;
+	const char *unix_socket = NULL;
+	struct config_setting_t *mysql_element = config_setting_get_elem(config_mysql, 0);
+	host = get_config_string(mysql_element, "host");
+	user = get_config_string(mysql_element, "user");
+	passwd = get_config_string(mysql_element, "passwd");
+	db = get_config_string(mysql_element, "db");
+	port = get_config_int(mysql_element, "port");
+	unix_socket = get_config_string(mysql_element, "unix_socket");
+}
+
+void close_config()
+{
+	config_destroy(config);
+}
+
 }
 
 int command_options(int argc, char **argv)
@@ -22,6 +92,7 @@ int command_options(int argc, char **argv)
 		static struct option long_options[] =
 		{
 			{"data", required_argument, 0, 'd'},
+			{"db_config", required_argument, 0, 1001},
 			{0, 0, 0, 0}
 		};
 
@@ -41,6 +112,10 @@ int command_options(int argc, char **argv)
 			case 'd':
 				printf("Input: %s\n", optarg);
 				parse_input(optarg);
+				break;
+			case 1001:
+				printf("Database Configuration File: %s\n", optarg);
+				CONFIG_FILE = optarg;
 				break;
 			default:
 				break;
@@ -271,4 +346,109 @@ int parse_input(char *hexString)
 		printf("\n");
 	}
 
+}
+
+
+/*
+* Function get_root_element_count:
+*	* Returns number (int) of elements in list 'name' in configuration 'config'.
+*	* Updates pointer '*config_element' to point to element 'name'.
+*
+* config_t *config : pointer to parsed config
+* char *name : pointer to name of element
+* config_setting_t *conf_element : pointer to element
+*/
+int get_root_element_count(config_t *config, char *name, config_setting_t *config_element)
+{
+	config_setting_t *conf_element = config_lookup(config, name);
+	if (conf_element == NULL)
+	{
+		fprintf(stderr, "No %s found in configuration file.\n", name);
+		exit(1);
+	}
+	else
+	{
+		*config_element = *conf_element;
+		return config_setting_length(config_element);
+	}
+}
+
+/*
+* Function get_element_count:
+*	* Returns number (int) of elements in list 'name' in configuration setting 'config_setting'.
+*	* Updates pointer '*config_element' to point to element 'name'.
+*
+* config_setting_t *config : pointer to parsed config setting
+* char *name : pointer to name of element
+* config_setting_t *conf_element : pointer to element
+*/
+int get_element_count(config_setting_t *config_setting, char *name, config_setting_t *config_element)
+{
+	config_setting_t *conf_element = config_setting_lookup(config_setting, name);
+	if (conf_element == NULL)
+	{
+		fprintf(stderr, "No %s found in configuration file for this schema.\n", name);
+		return 0;
+	}
+	else {
+		*config_element = *conf_element;
+		return config_setting_length(config_element);
+	}
+}
+
+/*
+* Function get_config_int looks up the integer value of 'name'
+*  in the configuration setting 'setting' and returns the integer.
+* -1 is returned if 'name' does not exist.
+*/
+int get_config_int(config_setting_t *setting, char *name)
+{
+	config_setting_t *setting_pointer = NULL;
+	setting_pointer = config_setting_lookup(setting, name);
+	if (setting_pointer != NULL)
+	{
+		return config_setting_get_int(setting_pointer);
+	}
+	else
+	{
+		return -1;
+	}
+}
+
+/*
+* Function get_config_bool looks up the boolean value of 'name'
+*  in the configuration setting 'setting' and returns it as an integer.
+* -1 is returned if 'name' does not exist.
+*/
+int get_config_bool(config_setting_t *setting, char *name)
+{
+	config_setting_t *setting_pointer = NULL;
+	setting_pointer = config_setting_lookup(setting, name);
+	if (setting_pointer != NULL)
+	{
+		return config_setting_get_bool(setting_pointer);
+	}
+	else
+	{
+		return -1;
+	}
+}
+
+/*
+* Function get_config_string looks up the string value of 'name'
+*  in the configuration setting 'setting' and returns the string.
+* NULL is returned if 'name' does not exist.
+*/
+const char *get_config_string(config_setting_t *setting, char *name)
+{
+	config_setting_t *setting_pointer = NULL;
+	setting_pointer = config_setting_lookup(setting, name);
+	if (setting_pointer != NULL)
+	{
+		return config_setting_get_string(setting_pointer);
+	}
+	else
+	{
+		return NULL;
+	}
 }

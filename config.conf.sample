@@ -1,0 +1,8 @@
+mysql: ({
+	host=""
+	user="smsd"
+	passwd=""
+	db="smsd"
+	port=0
+	unix_socket="/run/mysqld/mysqld.sock"
+})
