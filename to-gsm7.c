@@ -41,6 +41,46 @@ void finish_with_error()
 	exit(1);
 }
 
+/* Detect phone number type of a character array. */
+/*  Return values:
+	-1 = NULL
+	1 = International E.164 Format
+	2 = National or Short Code Number Format
+	3 = Non-Numeric Number (i.e. one-way text message)
+*/
+int get_number_type(char *number)
+{
+	int isE164 = 1;
+	int isNumber = 1;
+	int i = 0;
+	if (number == NULL) {
+		return -1;
+	}
+	if (number[i] != 0x2b) {
+		isE164 = 0;
+	}
+	if ((isE164 == 0) && (number[i] < 0x30 || number[i] > 0x39)) {
+		isNumber = 0;
+	}
+	if (isNumber == 0 || strlen(number) == 1) {
+		return 3;
+	}
+	for (i = 1; i < strlen(number); i++) {
+		if (number[i] > 0x2F && number[i] < 0x3A) {
+			continue;
+		} else {
+			isE164 = 0;
+			isNumber = 0;
+			return 3;
+		}
+	}
+	if (isE164 == 1 && isNumber == 1) {
+		return 1;
+	} else if (isE164 == 0 && isNumber == 1) {
+		return 2;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	MYSQL_RES *result;
@@ -92,7 +132,9 @@ int main(int argc, char **argv)
 			printf("%s ", field);
 		}
 		printf("\n");
-		printf("%s", row[8]);
+		printf("SMSC is %s of type %d.\n", row[6], get_number_type(row[6]));
+		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
+		printf("Decoded Text: %s\n", row[8]);
 		parse_input(row[2]);
 	}
 	mysql_free_result(result);
