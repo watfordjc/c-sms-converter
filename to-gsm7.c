@@ -25,7 +25,6 @@ int parse_input(char *hexString);
 
 MYSQL *db_conn;
 MYSQL *create_db_connection(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, const char *unix_socket);
-//MYSQL *create_db_connection(char *filename);
 
 long int GAMMU_VERSION = 17;
 
@@ -81,6 +80,19 @@ int get_number_type(char *number)
 	}
 }
 
+void ascii_to_ucs2(char *str, char *ucs2) {
+	int len = strlen(str);
+	int j;
+	char hex[] = "0123456789ABCDEF";
+	for (int i = 0; i < len; i++) {
+		j = i * 4;
+		ucs2[j] = '0';
+		ucs2[j+1] = '0';
+		ucs2[j+2] = hex[str[i] / 16];
+		ucs2[j+3] = hex[str[i] % 16];
+	}
+}
+
 int main(int argc, char **argv)
 {
 	MYSQL_RES *result;
@@ -122,6 +134,7 @@ int main(int argc, char **argv)
 	num_fields = mysql_num_fields(result);
 	while (row = mysql_fetch_row(result)) {
 		field_lengths = mysql_fetch_lengths(result);
+		int smsc_number_type;
 		char *field;
 		for (int i = 0; i < num_fields; i++) {
 			if (field_lengths[i] == 0) {
@@ -132,7 +145,74 @@ int main(int argc, char **argv)
 			printf("%s ", field);
 		}
 		printf("\n");
-		printf("SMSC is %s of type %d.\n", row[6], get_number_type(row[6]));
+		char *smsc_text = row[6];
+//		char *smsc_text = "SMSTEST";
+		smsc_number_type = get_number_type(smsc_text);
+		char smsc[strlen(smsc_text) * 4];
+		memset(smsc, 0, strlen(smsc_text) * 4);
+		short is_odd;
+		int smsc_len;
+		switch (smsc_number_type) {
+			case -1:
+				smsc[0] = '0';
+				smsc[1] = '0';
+				break;
+			case 1:
+				smsc[0] = '9';
+				smsc[1] = '1';
+				is_odd = (strlen(smsc_text) - 1) % 2;
+				for (i = 1; i < strlen(smsc_text); i+=2) {
+					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
+						smsc[i+1] = 'F';
+					} else {
+						smsc[i+1] = smsc_text[i+1];
+					}
+					smsc[i+2] = smsc_text[i];
+				}
+				smsc_len = is_odd ? (strlen(smsc_text) / 2) + 1 : (strlen(smsc_text) - 1) / 2 + 1;
+				printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
+				break;
+			case 2:
+				smsc[0] = '8';
+				smsc[1] = '1';
+				is_odd = strlen(smsc_text) % 2;
+				for (i = 0; i < strlen(smsc_text); i+=2) {
+					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
+						smsc[i+2] = 'F';
+					} else {
+						smsc[i+2] = smsc_text[i+1];
+					}
+					smsc[i+3] = smsc_text[i];
+				}
+				smsc_len = is_odd ? ((strlen(smsc_text) + 1) / 2) + 1 : (strlen(smsc_text) / 2) + 1;
+				printf("SMSC: 0x%02X%s\n", smsc_len, smsc);
+				break;
+			case 3:
+				smsc[0] = 'D';
+				smsc[1] = '0';
+				int j;
+				const char *c;
+				char ucs2[strlen(smsc_text) * 4 + 1];
+				memset(ucs2, 0, strlen(smsc_text) * 4 + 1);
+				ascii_to_ucs2(smsc_text, ucs2);
+//				printf("UCS-2: 0x%s\n", ucs2);
+				char gsm7[strlen(smsc_text) * 2 + 1];
+				memset(gsm7, 0, strlen(smsc_text) * 2 + 1);
+				int curChar = ucs2_to_gsm7(ucs2, strlen(smsc_text), gsm7);
+				if (curChar == -1) {
+					fprintf(stderr, "Invalid Sender\n");
+					break;
+				}
+				char out7bit[curChar];
+				memset(out7bit, 0, curChar);
+				printf("SMSC: 0x%02X%s", strlen(smsc_text) + 1, smsc);
+				j = gsm7_to_ud(gsm7, curChar, out7bit);
+				for (i = 0; i < j; i++) {
+					printf("%02X", out7bit[i]);
+				}
+				printf("\n");
+		}
+//		printf("SMSC is %s of type %d.\n", row[6], smsc_number_type);
 		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
 		printf("Decoded Text: %s\n", row[8]);
 		parse_input(row[2]);
@@ -409,16 +489,16 @@ int gsm7_to_ud(char *str, int curChar, char *out7bit)
 			shiftAt = 0;
 			continue;
 		}
-		printf("0x%02X, 0x%02X = ", str[i], str[i+1]);
+//		printf("0x%02X, 0x%02X = ", str[i], str[i+1]);
 		char temp = str[i]>>shiftAt;
 		char temp2 = '\0';
 		if (i + 1 < curChar) {
 			temp2 = str[i+1]<<7-shiftAt;
 		} else {
-			printf("Last character = ");
+//			printf("Last character = ");
 		}
 		out7bit[j] = temp + temp2;
-		printf("0x%02X + 0x%02X = 0x%02X\n", str[i], str[i+1], temp + temp2);
+//		printf("0x%02X + 0x%02X = 0x%02X\n", str[i], str[i+1], temp + temp2);
 		shiftAt++;
 		j++;
 	}
@@ -434,7 +514,6 @@ int parse_input(char *hexString)
 	memset(str, 0, strlen(hexString));
 	int curChar = ucs2_to_gsm7(hexString, len, str);
 
-	printf("SMSC: TODO\n");
 	printf("PDU-Header: TODO\n");
 	printf("TP-MTI: TODO\n");
 	printf("TP-MMS: TODO\n");
