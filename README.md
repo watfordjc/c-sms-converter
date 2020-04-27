@@ -17,9 +17,7 @@ The above package for libmysqlclient development files may have a different name
 
 ### Compile Line
 
-`gcc to-gsm7.c -o to-gsm7 -lmysqlclient $(mysql_config --include)/server`
-
-Raspbian has switched from MySQL to MariaDB, so the compilation line above may need modifying for successful compilation on operating systems still using MySQL.
+`gcc to-gsm7.c -o to-gsm7 $(mysql_config --cflags --libs)`
 
 ## Under Active Development
 The current version has no database connectivity and can only produce the TP-PID, TP-DCS, TP-UDL, and TP-UD hex strings for a PDU. It takes a Big Endian UCS-2 hex string as input (`-d` or `--data` command line argument) and prints output that currently needs further parsing to be usable for a PDU.
