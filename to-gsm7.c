@@ -2,6 +2,8 @@
 #include <getopt.h>
 #include <string.h>
 #include <stdlib.h>
+/* MySQL */
+#include <mysql.h>
 /* libconfig */
 #include <libconfig.h>
 
@@ -21,15 +23,80 @@ int ucs2_to_gsm7(char *hexString, int len, char *str);
 int gsm7_to_ud(char *str, int curChar, char *out7bit);
 int parse_input(char *hexString);
 
+MYSQL *db_conn;
+MYSQL *create_db_connection(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, const char *unix_socket);
+//MYSQL *create_db_connection(char *filename);
+
+long int GAMMU_VERSION = 17;
+
 char *CONFIG_FILE = "";
 struct config_t conf;
 struct config_t *config;
 
+void finish_with_error()
+{
+	fprintf(stderr, "%s\n", mysql_error(db_conn));
+	mysql_close(db_conn);
+	close_config();
+	exit(1);
+}
+
 int main(int argc, char **argv)
 {
+	MYSQL_RES *result;
+	MYSQL_ROW row;
+	int i;
+	int num_fields;
+	unsigned long *field_lengths;
+	int db_version;
+	char *end_ptr;
+
+	printf("MySQL client version: %s\n", mysql_get_client_info());
 	command_options(argc, argv);
 	open_config();
 	parse_config();
+
+	if (mysql_query(db_conn, "SELECT version FROM gammu")) {
+		finish_with_error();
+	}
+	result = mysql_store_result(db_conn);
+	if (result == NULL) {
+		finish_with_error();
+	}
+	num_fields = mysql_num_fields(result);
+	row = mysql_fetch_row(result);
+	db_version = strtol(row[0], &end_ptr, 10);
+	printf("Gammu database version %ld\n", db_version);
+	if (db_version != GAMMU_VERSION) {
+		fprintf(stderr, "Only Gammu database version %d is currently supported.\n", GAMMU_VERSION);
+		exit(1);
+	}
+
+	if (mysql_query(db_conn, "SELECT * FROM inbox ORDER BY ID LIMIT 2")) {
+		finish_with_error();
+	}
+	result = mysql_store_result(db_conn);
+	if (result == NULL) {
+		finish_with_error();
+	}
+	num_fields = mysql_num_fields(result);
+	while (row = mysql_fetch_row(result)) {
+		field_lengths = mysql_fetch_lengths(result);
+		char *field;
+		for (int i = 0; i < num_fields; i++) {
+			if (field_lengths[i] == 0) {
+				field = row[i] ? "EMPTY" : "NULL";
+			} else {
+				field = row[i];
+			}
+			printf("%s ", field);
+		}
+		printf("\n");
+		printf("%s", row[8]);
+		parse_input(row[2]);
+	}
+	mysql_free_result(result);
+	mysql_close(db_conn);
 	close_config();
 }
 
@@ -75,6 +142,7 @@ void parse_config()
 	db = get_config_string(mysql_element, "db");
 	port = get_config_int(mysql_element, "port");
 	unix_socket = get_config_string(mysql_element, "unix_socket");
+	create_db_connection(host, user, passwd, db, port, unix_socket);
 }
 
 void close_config()
@@ -82,6 +150,16 @@ void close_config()
 	config_destroy(config);
 }
 
+MYSQL *create_db_connection(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, const char *unix_socket)
+{
+	db_conn = mysql_init(NULL);
+	if (db_conn == NULL) {
+		fprintf(stderr, "mysql_init() failed.\n");
+		exit(1);
+	}
+	if (mysql_real_connect(db_conn, host, user, passwd, db, port, unix_socket, 0) == NULL) {
+		finish_with_error();
+	}
 }
 
 int command_options(int argc, char **argv)
