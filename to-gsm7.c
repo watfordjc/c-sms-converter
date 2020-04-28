@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 /* MySQL */
 #include <mysql.h>
 /* libconfig */
@@ -184,6 +185,37 @@ void oa_to_hex(char *oa_text, char *oa)
 	printf("TP-OA: 0x%02X%s\n", oa_len, oa);
 }
 
+void scts_to_hex(char *scts_text, char *scts)
+{
+	time_t timestamp = atoi(scts_text);
+	struct tm datetime;
+	char date[24];
+	memset(date, 0, 24);
+	datetime = *gmtime(&timestamp);
+	strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &datetime);
+
+	if (date[4] != '-') {
+		fprintf(stderr, "Y10K Bug?\n");
+		exit(1);
+	}
+
+	scts[0] = date[3];
+	scts[1] = date[2];
+	scts[2] = date[6];
+	scts[3] = date[5];
+	scts[4] = date[9];
+	scts[5] = date[8];
+	scts[6] = date[12];
+	scts[7] = date[11];
+	scts[8] = date[15];
+	scts[9] = date[14];
+	scts[10] = date[18];
+	scts[11] = date[17];
+	scts[12] = '0';
+	scts[13] = '0';
+	printf("TP-SCTS: 0x%s\n", scts);
+}
+
 int main(int argc, char **argv)
 {
 	MYSQL_RES *result;
@@ -214,8 +246,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Only Gammu database version %d is currently supported.\n", GAMMU_VERSION);
 		exit(1);
 	}
-
-	if (mysql_query(db_conn, "SELECT * FROM inbox ORDER BY ID LIMIT 2")) {
+	if (mysql_query(db_conn, "SELECT *,UNIX_TIMESTAMP(ReceivingDateTime) FROM inbox ORDER BY ID LIMIT 2")) {
 		finish_with_error();
 	}
 	result = mysql_store_result(db_conn);
@@ -241,6 +272,10 @@ int main(int argc, char **argv)
 		char smsc[strlen(smsc_text) * 4];
 		memset(smsc, 0, strlen(smsc_text) * 4);
 		smsc_to_hex(smsc_text, smsc);
+		char *scts_text = row[13];
+		char scts[15];
+		memset(scts, 0, 15);
+		scts_to_hex(scts_text, scts);
 		char *oa_text = row[3];
 //		char *oa_text = "SMSTEST";
 		char oa[strlen(oa_text) * 4];
