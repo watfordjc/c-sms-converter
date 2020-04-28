@@ -174,6 +174,16 @@ void smsc_to_hex(char *smsc_text, char *smsc)
 	printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
 }
 
+void oa_to_hex(char *oa_text, char *oa)
+{
+	int len_nibbles = phone_number_to_hex(oa_text, oa);
+	int oa_len = len_nibbles;
+	if (oa[1] == '1' && oa[len_nibbles] == 'F') {
+		oa_len--;
+	}
+	printf("TP-OA: 0x%02X%s\n", oa_len, oa);
+}
+
 int main(int argc, char **argv)
 {
 	MYSQL_RES *result;
@@ -231,8 +241,13 @@ int main(int argc, char **argv)
 		char smsc[strlen(smsc_text) * 4];
 		memset(smsc, 0, strlen(smsc_text) * 4);
 		smsc_to_hex(smsc_text, smsc);
+		char *oa_text = row[3];
+//		char *oa_text = "SMSTEST";
+		char oa[strlen(oa_text) * 4];
+		memset(oa, 0, strlen(oa_text) * 4);
+		oa_to_hex(oa_text, oa);
 //		printf("SMSC is %s of type %d.\n", row[6], smsc_number_type);
-		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
+//		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
 		printf("Decoded Text: %s\n", row[8]);
 		parse_input(row[2]);
 	}
