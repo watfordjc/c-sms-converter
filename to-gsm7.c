@@ -185,6 +185,11 @@ void oa_to_hex(char *oa_text, char *oa)
 	printf("TP-OA: 0x%02X%s\n", oa_len, oa);
 }
 
+void udh_to_hex(char *udh_text, char *udh)
+{
+	printf("UDH: %s\n", udh_text);
+}
+
 void scts_to_hex(char *scts_text, char *scts)
 {
 	time_t timestamp = atoi(scts_text);
@@ -246,7 +251,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Only Gammu database version %d is currently supported.\n", GAMMU_VERSION);
 		exit(1);
 	}
-	if (mysql_query(db_conn, "SELECT *,UNIX_TIMESTAMP(ReceivingDateTime) FROM inbox ORDER BY ID LIMIT 2")) {
+	if (mysql_query(db_conn, "SELECT *,UNIX_TIMESTAMP(ReceivingDateTime) FROM inbox WHERE udh != '' ORDER BY ID LIMIT 2")) {
 		finish_with_error();
 	}
 	result = mysql_store_result(db_conn);
@@ -258,6 +263,7 @@ int main(int argc, char **argv)
 		field_lengths = mysql_fetch_lengths(result);
 		int smsc_number_type;
 		char *field;
+		int pduh = 0x04;
 		for (int i = 0; i < num_fields; i++) {
 			if (field_lengths[i] == 0) {
 				field = row[i] ? "EMPTY" : "NULL";
@@ -281,6 +287,14 @@ int main(int argc, char **argv)
 		char oa[strlen(oa_text) * 4];
 		memset(oa, 0, strlen(oa_text) * 4);
 		oa_to_hex(oa_text, oa);
+		char *udh_text = row[5];
+		if (udh_text != "") {
+			char udh[strlen(udh_text) * 4];
+			memset(udh, 0, strlen(udh_text) * 4);
+			udh_to_hex(udh_text, udh);
+			pduh |= 0x40;
+		}
+		printf("PDU-Header: 0x%02X\n", pduh);
 //		printf("SMSC is %s of type %d.\n", row[6], smsc_number_type);
 //		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
 		printf("Decoded Text: %s\n", row[8]);
@@ -583,19 +597,16 @@ int parse_input(char *hexString)
 	memset(str, 0, strlen(hexString));
 	int curChar = ucs2_to_gsm7(hexString, len, str);
 
-	printf("PDU-Header: TODO\n");
 	printf("TP-MTI: TODO\n");
 	printf("TP-MMS: TODO\n");
 	printf("TP-SRI: TODO\n");
 	printf("TP-RP: TODO\n");
 	printf("TP-UDHI: TODO\n");
-	printf("TP-OA: TODO\n");
 	printf("TP-PID: 0x00\n");
 
 	if (curChar == -1) {
 		printf("UCS-2\n");
 		printf("TP-DCS: 0x08\n");
-		printf("TP-SCTS: TODO\n");
 		printf("TP-UDL: 0x%02X\n", len * 2);
 		printf("TP-UD: 0x%s\n", hexString);
 		return 0;
@@ -604,7 +615,6 @@ int parse_input(char *hexString)
 		memset(out7bit, 0, curChar);
 		printf("7-bit GSM\n");
 		printf("TP-DCS: 0x00\n");
-		printf("TP-SCTS: TODO\n");
 		j = gsm7_to_ud(str, curChar, out7bit);
 		printf("TP-UDL: 0x%02X\n", len);
 		printf("TP-UD: 0x");
