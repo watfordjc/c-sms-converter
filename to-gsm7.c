@@ -19,6 +19,7 @@ int get_config_int(config_setting_t *setting, char *name);
 int get_config_bool(config_setting_t *setting, char *name);
 const char *get_config_string(config_setting_t *setting, char *name);
 
+void smsc_to_hex(char *smsc, char *smsc_hex);
 int ucs2_to_gsm7(char *hexString, int len, char *str);
 int gsm7_to_ud(char *str, int curChar, char *out7bit);
 int parse_input(char *hexString);
@@ -52,7 +53,7 @@ int get_number_type(char *number)
 	int isE164 = 1;
 	int isNumber = 1;
 	int i = 0;
-	if (number == NULL) {
+	if (number == NULL || strlen(number) == 0) {
 		return -1;
 	}
 	if (number[i] != 0x2b) {
@@ -80,7 +81,8 @@ int get_number_type(char *number)
 	}
 }
 
-void ascii_to_ucs2(char *str, char *ucs2) {
+void ascii_to_ucs2(char *str, char *ucs2)
+{
 	int len = strlen(str);
 	int j;
 	char hex[] = "0123456789ABCDEF";
@@ -91,6 +93,74 @@ void ascii_to_ucs2(char *str, char *ucs2) {
 		ucs2[j+2] = hex[str[i] / 16];
 		ucs2[j+3] = hex[str[i] % 16];
 	}
+}
+
+void smsc_to_hex(char *smsc_text, char *smsc)
+{
+		short is_odd;
+		int smsc_len, i;
+		int smsc_number_type = get_number_type(smsc_text);
+		switch (smsc_number_type) {
+			case -1:
+				smsc = "0100";
+				printf("SMSC: 0x%s\n", smsc);
+				break;
+			case 1:
+				smsc[0] = '9';
+				smsc[1] = '1';
+				is_odd = (strlen(smsc_text) - 1) % 2;
+				for (i = 1; i < strlen(smsc_text); i+=2) {
+					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
+						smsc[i+1] = 'F';
+					} else {
+						smsc[i+1] = smsc_text[i+1];
+					}
+					smsc[i+2] = smsc_text[i];
+				}
+				smsc_len = is_odd ? (strlen(smsc_text) / 2) + 1 : (strlen(smsc_text) - 1) / 2 + 1;
+				printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
+				break;
+			case 2:
+				smsc[0] = '8';
+				smsc[1] = '1';
+				is_odd = strlen(smsc_text) % 2;
+				for (i = 0; i < strlen(smsc_text); i+=2) {
+					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
+						smsc[i+2] = 'F';
+					} else {
+						smsc[i+2] = smsc_text[i+1];
+					}
+					smsc[i+3] = smsc_text[i];
+				}
+				smsc_len = is_odd ? ((strlen(smsc_text) + 1) / 2) + 1 : (strlen(smsc_text) / 2) + 1;
+				printf("SMSC: 0x%02X%s\n", smsc_len, smsc);
+				break;
+			case 3:
+				smsc[0] = 'D';
+				smsc[1] = '0';
+				int j;
+				const char *c;
+				char ucs2[strlen(smsc_text) * 4 + 1];
+				memset(ucs2, 0, strlen(smsc_text) * 4 + 1);
+				ascii_to_ucs2(smsc_text, ucs2);
+//				printf("UCS-2: 0x%s\n", ucs2);
+				char gsm7[strlen(smsc_text) * 2 + 1];
+				memset(gsm7, 0, strlen(smsc_text) * 2 + 1);
+				int curChar = ucs2_to_gsm7(ucs2, strlen(smsc_text), gsm7);
+				if (curChar == -1) {
+					fprintf(stderr, "Invalid Sender\n");
+					break;
+				}
+				char out7bit[curChar];
+				memset(out7bit, 0, curChar);
+				printf("SMSC: 0x%02X%s", strlen(smsc_text) + 1, smsc);
+				j = gsm7_to_ud(gsm7, curChar, out7bit);
+				for (i = 0; i < j; i++) {
+					printf("%02X", out7bit[i]);
+				}
+				printf("\n");
+				break;
+		}
 }
 
 int main(int argc, char **argv)
@@ -147,71 +217,9 @@ int main(int argc, char **argv)
 		printf("\n");
 		char *smsc_text = row[6];
 //		char *smsc_text = "SMSTEST";
-		smsc_number_type = get_number_type(smsc_text);
 		char smsc[strlen(smsc_text) * 4];
 		memset(smsc, 0, strlen(smsc_text) * 4);
-		short is_odd;
-		int smsc_len;
-		switch (smsc_number_type) {
-			case -1:
-				smsc[0] = '0';
-				smsc[1] = '0';
-				break;
-			case 1:
-				smsc[0] = '9';
-				smsc[1] = '1';
-				is_odd = (strlen(smsc_text) - 1) % 2;
-				for (i = 1; i < strlen(smsc_text); i+=2) {
-					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
-						smsc[i+1] = 'F';
-					} else {
-						smsc[i+1] = smsc_text[i+1];
-					}
-					smsc[i+2] = smsc_text[i];
-				}
-				smsc_len = is_odd ? (strlen(smsc_text) / 2) + 1 : (strlen(smsc_text) - 1) / 2 + 1;
-				printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
-				break;
-			case 2:
-				smsc[0] = '8';
-				smsc[1] = '1';
-				is_odd = strlen(smsc_text) % 2;
-				for (i = 0; i < strlen(smsc_text); i+=2) {
-					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
-						smsc[i+2] = 'F';
-					} else {
-						smsc[i+2] = smsc_text[i+1];
-					}
-					smsc[i+3] = smsc_text[i];
-				}
-				smsc_len = is_odd ? ((strlen(smsc_text) + 1) / 2) + 1 : (strlen(smsc_text) / 2) + 1;
-				printf("SMSC: 0x%02X%s\n", smsc_len, smsc);
-				break;
-			case 3:
-				smsc[0] = 'D';
-				smsc[1] = '0';
-				int j;
-				const char *c;
-				char ucs2[strlen(smsc_text) * 4 + 1];
-				memset(ucs2, 0, strlen(smsc_text) * 4 + 1);
-				ascii_to_ucs2(smsc_text, ucs2);
-//				printf("UCS-2: 0x%s\n", ucs2);
-				char gsm7[strlen(smsc_text) * 2 + 1];
-				memset(gsm7, 0, strlen(smsc_text) * 2 + 1);
-				int curChar = ucs2_to_gsm7(ucs2, strlen(smsc_text), gsm7);
-				if (curChar == -1) {
-					fprintf(stderr, "Invalid Sender\n");
-					break;
-				}
-				char out7bit[curChar];
-				memset(out7bit, 0, curChar);
-				printf("SMSC: 0x%02X%s", strlen(smsc_text) + 1, smsc);
-				j = gsm7_to_ud(gsm7, curChar, out7bit);
-				for (i = 0; i < j; i++) {
-					printf("%02X", out7bit[i]);
-				}
-				printf("\n");
-		}
+		smsc_to_hex(smsc_text, smsc);
 //		printf("SMSC is %s of type %d.\n", row[6], smsc_number_type);
 		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
 		printf("Decoded Text: %s\n", row[8]);
