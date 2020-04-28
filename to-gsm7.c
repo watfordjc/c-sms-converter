@@ -13,18 +13,21 @@ void open_config();
 void parse_config();
 void close_config();
 
+int get_number_type(char *number);
+void ascii_to_ucs2(char *str, char *ucs2);
+int phone_number_to_hex(char *phone_number, char *hex);
+void smsc_to_hex(char *smsc, char *smsc_hex);
+int ucs2_to_gsm7(char *hexString, int len, char *str);
+int gsm7_to_ud(char *str, int curChar, char *out7bit);
+int parse_input(char *hexString);
+
 int get_root_element_count(config_t *config, char *name, config_setting_t *config_element);
 int get_element_count(config_setting_t *config, char *name, config_setting_t *config_element);
 int get_config_int(config_setting_t *setting, char *name);
 int get_config_bool(config_setting_t *setting, char *name);
 const char *get_config_string(config_setting_t *setting, char *name);
 
-void smsc_to_hex(char *smsc, char *smsc_hex);
-int ucs2_to_gsm7(char *hexString, int len, char *str);
-int gsm7_to_ud(char *str, int curChar, char *out7bit);
-int parse_input(char *hexString);
-
-MYSQL *db_conn;
+void finish_with_error();
 MYSQL *create_db_connection(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, const char *unix_socket);
 
 long int GAMMU_VERSION = 17;
@@ -32,6 +35,7 @@ long int GAMMU_VERSION = 17;
 char *CONFIG_FILE = "";
 struct config_t conf;
 struct config_t *config;
+MYSQL *db_conn;
 
 void finish_with_error()
 {
@@ -95,72 +99,79 @@ void ascii_to_ucs2(char *str, char *ucs2)
 	}
 }
 
+int phone_number_to_hex(char *phone_number, char *hex)
+{
+	short is_odd;
+	int len_nibbles, i;
+	int len_number = strlen(phone_number);
+	int number_type = get_number_type(phone_number);
+	int first_digit = 0;
+	int array_offset = 2;
+	int is_number = 0;
+
+	switch(number_type) {
+		case -1:
+			hex = "0100";
+			return 0;
+			break;
+		case 1:
+			hex[0] = '9';
+			hex[1] = '1';
+			first_digit = 1;
+			is_number = 1;
+			break;
+		case 2:
+			hex[0] = '8';
+			hex[1] = '1';
+			is_number = 1;
+			break;
+		case 3:
+			hex[0] = 'D';
+			hex[1] = '0';
+			break;
+	}
+
+	if (is_number == 1) {
+		array_offset -= first_digit;
+		is_odd = (len_number - first_digit) % 2;
+		for (i = first_digit; i < len_number; i+=2) {
+			if (i + 1 == len_number && is_odd == 1) {
+				hex[i + array_offset] = 'F';
+			} else {
+				hex[i + array_offset] = phone_number[i + 1];
+			}
+			hex[i + array_offset + 1] = phone_number[i];
+		}
+		len_nibbles = strlen(hex) - 2;
+		return len_nibbles;
+	} else {
+		int j;
+		char ucs2[len_number * 4 + 1];
+		memset(ucs2, 0, len_number * 4 + 1);
+		ascii_to_ucs2(phone_number, ucs2);
+		char gsm7[len_number * 4 + 1];
+		memset(gsm7, 0, len_number * 4 + 1);
+		int curChar = ucs2_to_gsm7(ucs2, len_number, gsm7);
+		if (curChar == -1) {
+			fprintf(stderr, "Invalid Sender\n");
+		}
+		char out7bit[curChar];
+		memset(out7bit, 0, curChar);
+		j = gsm7_to_ud(gsm7, curChar, out7bit);
+		for (i = 0; i < j; i++) {
+			snprintf(hex + array_offset + (i * 2), 4, "%02X", out7bit[i]);
+		}
+		len_nibbles = strlen(hex) - 2;
+		return len_nibbles;
+	}
+
+}
+
 void smsc_to_hex(char *smsc_text, char *smsc)
 {
-		short is_odd;
-		int smsc_len, i;
-		int smsc_number_type = get_number_type(smsc_text);
-		switch (smsc_number_type) {
-			case -1:
-				smsc = "0100";
-				printf("SMSC: 0x%s\n", smsc);
-				break;
-			case 1:
-				smsc[0] = '9';
-				smsc[1] = '1';
-				is_odd = (strlen(smsc_text) - 1) % 2;
-				for (i = 1; i < strlen(smsc_text); i+=2) {
-					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
-						smsc[i+1] = 'F';
-					} else {
-						smsc[i+1] = smsc_text[i+1];
-					}
-					smsc[i+2] = smsc_text[i];
-				}
-				smsc_len = is_odd ? (strlen(smsc_text) / 2) + 1 : (strlen(smsc_text) - 1) / 2 + 1;
-				printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
-				break;
-			case 2:
-				smsc[0] = '8';
-				smsc[1] = '1';
-				is_odd = strlen(smsc_text) % 2;
-				for (i = 0; i < strlen(smsc_text); i+=2) {
-					if (i + 1 == strlen(smsc_text) && is_odd == 1) {
-						smsc[i+2] = 'F';
-					} else {
-						smsc[i+2] = smsc_text[i+1];
-					}
-					smsc[i+3] = smsc_text[i];
-				}
-				smsc_len = is_odd ? ((strlen(smsc_text) + 1) / 2) + 1 : (strlen(smsc_text) / 2) + 1;
-				printf("SMSC: 0x%02X%s\n", smsc_len, smsc);
-				break;
-			case 3:
-				smsc[0] = 'D';
-				smsc[1] = '0';
-				int j;
-				const char *c;
-				char ucs2[strlen(smsc_text) * 4 + 1];
-				memset(ucs2, 0, strlen(smsc_text) * 4 + 1);
-				ascii_to_ucs2(smsc_text, ucs2);
-//				printf("UCS-2: 0x%s\n", ucs2);
-				char gsm7[strlen(smsc_text) * 2 + 1];
-				memset(gsm7, 0, strlen(smsc_text) * 2 + 1);
-				int curChar = ucs2_to_gsm7(ucs2, strlen(smsc_text), gsm7);
-				if (curChar == -1) {
-					fprintf(stderr, "Invalid Sender\n");
-					break;
-				}
-				char out7bit[curChar];
-				memset(out7bit, 0, curChar);
-				printf("SMSC: 0x%02X%s", strlen(smsc_text) + 1, smsc);
-				j = gsm7_to_ud(gsm7, curChar, out7bit);
-				for (i = 0; i < j; i++) {
-					printf("%02X", out7bit[i]);
-				}
-				printf("\n");
-				break;
-		}
+	int len_nibbles = phone_number_to_hex(smsc_text, smsc);
+	int smsc_len = len_nibbles / 2 + 1;
+	printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
 }
 
 int main(int argc, char **argv)
