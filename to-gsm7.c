@@ -17,9 +17,13 @@ void close_config();
 int get_number_type(char *number);
 void ascii_to_ucs2(char *str, char *ucs2);
 int phone_number_to_hex(char *phone_number, char *hex);
-void smsc_to_hex(char *smsc, char *smsc_hex);
+int smsc_to_hex(char *smsc, char *smsc_hex);
+int oa_to_hex(char *oa_text, char *oa);
+void scts_to_hex(char *scts_text, char *scts);
+void udh_to_hex(char *udh_text, char *udh);
+int ud_to_hex(char *udh, char *ud_text, char *uh);
 int ucs2_to_gsm7(char *hexString, int len, char *str);
-int gsm7_to_ud(char *str, int curChar, char *out7bit);
+int gsm7_to_ud(char *str, int curChar, char startChar, char *out7bit);
 int parse_input(char *hexString);
 
 int get_root_element_count(config_t *config, char *name, config_setting_t *config_element);
@@ -37,6 +41,8 @@ char *CONFIG_FILE = "";
 struct config_t conf;
 struct config_t *config;
 MYSQL *db_conn;
+
+char bitmasks[8] = { 0x0, 0x1, 0x3, 0x7, 0xF, 0x1F, 0x3F, 0x7F };
 
 void finish_with_error()
 {
@@ -158,7 +164,7 @@ int phone_number_to_hex(char *phone_number, char *hex)
 		}
 		char out7bit[curChar];
 		memset(out7bit, 0, curChar);
-		j = gsm7_to_ud(gsm7, curChar, out7bit);
+		j = gsm7_to_ud(gsm7, curChar, 0, out7bit);
 		for (i = 0; i < j; i++) {
 			snprintf(hex + array_offset + (i * 2), 4, "%02X", out7bit[i]);
 		}
@@ -168,14 +174,15 @@ int phone_number_to_hex(char *phone_number, char *hex)
 
 }
 
-void smsc_to_hex(char *smsc_text, char *smsc)
+int smsc_to_hex(char *smsc_text, char *smsc)
 {
 	int len_nibbles = phone_number_to_hex(smsc_text, smsc);
 	int smsc_len = len_nibbles / 2 + 1;
 	printf("SMSC: 0x%02d%s\n", smsc_len, smsc);
+	return smsc_len;
 }
 
-void oa_to_hex(char *oa_text, char *oa)
+int oa_to_hex(char *oa_text, char *oa)
 {
 	int len_nibbles = phone_number_to_hex(oa_text, oa);
 	int oa_len = len_nibbles;
@@ -183,11 +190,13 @@ void oa_to_hex(char *oa_text, char *oa)
 		oa_len--;
 	}
 	printf("TP-OA: 0x%02X%s\n", oa_len, oa);
+	return oa_len;
 }
 
 void udh_to_hex(char *udh_text, char *udh)
 {
-	printf("UDH: %s\n", udh_text);
+	strcpy(udh, udh_text);
+//	printf("UDH: %s\n", udh_text);
 }
 
 void scts_to_hex(char *scts_text, char *scts)
@@ -219,6 +228,121 @@ void scts_to_hex(char *scts_text, char *scts)
 	scts[12] = '0';
 	scts[13] = '0';
 	printf("TP-SCTS: 0x%s\n", scts);
+}
+
+int ud_to_hex(char *udh, char *ud_text, char *ud)
+{
+//	printf("udh: %s\n", udh);
+	int udh_padding_bits = 7 - (strlen(udh) * 4 % 7);
+	if (udh_padding_bits == 7) {
+		udh_padding_bits = 0;
+	}
+//	printf("UD padding bits required for UDH: %d\n", udh_padding_bits);
+
+	int i, j;
+	int len = strlen(ud_text) / 4;
+	char str[strlen(ud_text)];
+	memset(str, 0, strlen(ud_text));
+	int curChar = ucs2_to_gsm7(ud_text, len, str);
+
+	printf("TP-MTI: TODO\n");
+	printf("TP-MMS: TODO\n");
+	printf("TP-SRI: TODO\n");
+	printf("TP-RP: TODO\n");
+	printf("TP-UDHI: TODO\n");
+	printf("TP-PID: 0x00\n");
+
+	if (curChar == -1) {
+		printf("UCS-2\n");
+		printf("TP-DCS: 0x08\n");
+		printf("TP-UDL: 0x%02X\n", len * 2);
+		printf("TP-UD: 0x%s\n", ud_text);
+		strcpy(ud, ud_text);
+		return len * 2 + (strlen(udh) / 2);
+	}
+
+	char out7bit[curChar + 8];
+	memset(out7bit, 0, curChar + 8);
+	printf("7-bit GSM\n");
+	printf("TP-DCS: 0x00\n");
+	if (udh_padding_bits == 1) {
+		str[0] = str[0]<<udh_padding_bits;
+	} else if (udh_padding_bits != 0) {
+		fprintf(stderr, "Error: GSM 7-Bit DCS with a UDHL+UDH length that is not 6 or 7 octets.\n");
+		exit(1);
+		// TODO: Fix and test code for 2-6 padding bits.
+
+		int shiftRight = udh_padding_bits;
+		int shiftLeft = 7 - udh_padding_bits;
+		printf("shiftRight: %d, shiftLeft: %d\n", shiftRight, shiftLeft);
+		char lowerBits = (str[0] & bitmasks[udh_padding_bits])<<shiftLeft;
+		printf("0: lowerBits = %d, %d = ", lowerBits, str[0]);
+		str[0] = str[0]>>shiftRight;
+		printf("%d\n", str[0]);
+		for (i = 1; i < curChar; i++) {
+			char tempChar = str[i];
+			char tempLowerBits = (tempChar & bitmasks[udh_padding_bits])<<shiftLeft;
+			printf("%d: %d => %d + %d = ", i, str[i], tempChar>>shiftRight, lowerBits);
+//			printf("%d: lowerBits = %d, tempLowerBits = %d, %d = ", i, lowerBits, tempLowerBits, str[i]);
+			str[i] = lowerBits | tempChar>>shiftRight;
+			lowerBits = tempLowerBits;
+			printf("%d, lowerBits = %d\n", str[i], lowerBits);
+			if ((i + 1 == curChar) && (lowerBits > 0)) {
+				str[i+1] = lowerBits;
+				printf("%d: x => x + %d = %d\n", i+1, lowerBits, str[i+1]);
+			}
+		}
+		if (lowerBits != 0) {
+			curChar++;
+		}
+	}
+	j = gsm7_to_ud(str, curChar, udh_padding_bits, out7bit);
+	printf("TP-UDL: 0x%02X\n", len + (strlen(udh) / 2) + 1);
+	snprintf(ud, 8, "%02X%02X", 0x00, 0x00);
+	snprintf(ud + 4, 4, "%02X", len + (strlen(udh) / 2) + 1);
+	strncpy(ud + 6, udh, strlen(udh));
+	printf("TP-UD: 0x%s", udh);
+	for (i = 0; i < j; i++) {
+		snprintf(ud + 6 + strlen(udh) + i * 2, 4, "%02X", out7bit[i]);
+		printf("%02X", out7bit[i]);
+	}
+	printf("\n");
+	return len + (strlen(udh) / 2) + 1;
+
+/*
+	int i, j;
+	int len = strlen(hexString) / 4;
+	char str[strlen(hexString)];
+	memset(str, 0, strlen(hexString));
+	int curChar = ucs2_to_gsm7(hexString, len, str);
+
+	printf("TP-MTI: TODO\n");
+	printf("TP-MMS: TODO\n");
+	printf("TP-SRI: TODO\n");
+	printf("TP-RP: TODO\n");
+	printf("TP-UDHI: TODO\n");
+	printf("TP-PID: 0x00\n");
+
+	if (curChar == -1) {
+		printf("UCS-2\n");
+		printf("TP-DCS: 0x08\n");
+		printf("TP-UDL: 0x%02X\n", len * 2);
+		printf("TP-UD: 0x%s\n", hexString);
+		return 0;
+	} else {
+		char out7bit[curChar];
+		memset(out7bit, 0, curChar);
+		printf("7-bit GSM\n");
+		printf("TP-DCS: 0x00\n");
+		j = gsm7_to_ud(str, curChar, out7bit);
+		printf("TP-UDL: 0x%02X\n", len);
+		printf("TP-UD: 0x");
+		for (i = 0; i < j; i++) {
+			printf("%02X", out7bit[i]);
+		}
+		printf("\n");
+	}
+*/
 }
 
 int main(int argc, char **argv)
@@ -277,7 +401,7 @@ int main(int argc, char **argv)
 //		char *smsc_text = "SMSTEST";
 		char smsc[strlen(smsc_text) * 4];
 		memset(smsc, 0, strlen(smsc_text) * 4);
-		smsc_to_hex(smsc_text, smsc);
+		int smsc_len = smsc_to_hex(smsc_text, smsc);
 		char *scts_text = row[13];
 		char scts[15];
 		memset(scts, 0, 15);
@@ -286,11 +410,16 @@ int main(int argc, char **argv)
 //		char *oa_text = "SMSTEST";
 		char oa[strlen(oa_text) * 4];
 		memset(oa, 0, strlen(oa_text) * 4);
-		oa_to_hex(oa_text, oa);
+		int oa_len = oa_to_hex(oa_text, oa);
 		char *udh_text = row[5];
-		if (udh_text != "") {
-			char udh[strlen(udh_text) * 4];
-			memset(udh, 0, strlen(udh_text) * 4);
+		char udh[strlen(udh_text) * 4];
+		memset(udh, 0, strlen(udh_text) * 4);
+		if (field_lengths[5] > 0) {
+			int udhl_padding = strlen(udh_text) * 4 % 7;
+			if (7 - udhl_padding > 1 && udhl_padding != 0) {
+				printf("udhl_padding = %d\n", udhl_padding);
+				fprintf(stderr, "Unsupported TP-UDH: Length not divisible by 7 (more than 1 padding bit required). If TP-UD is GSM 7-bit, PDU may be bad.\n");
+			}
 			udh_to_hex(udh_text, udh);
 			pduh |= 0x40;
 		}
@@ -298,7 +427,12 @@ int main(int argc, char **argv)
 //		printf("SMSC is %s of type %d.\n", row[6], smsc_number_type);
 //		printf("Sender is %s of type %d.\n", row[3], get_number_type(row[3]));
 		printf("Decoded Text: %s\n", row[8]);
-		parse_input(row[2]);
+		char *ud_text = row[2];
+		char ud[strlen(ud_text) * 4 + 2];
+		memset(ud, 0, strlen(ud_text) * 4 + 2);
+		int udl = ud_to_hex(udh, ud_text, ud);
+		printf("PDU: %02X%s%02X%02X%s%.4s%s%02s\n", smsc_len, smsc, pduh, oa_len, oa, ud, scts, ud + 4);
+//		parse_input(row[2]);
 	}
 	mysql_free_result(result);
 	mysql_close(db_conn);
@@ -556,19 +690,20 @@ int ucs2_to_gsm7(char *hexString, int len, char *str)
 		str[curChar] = num & 0xFF;
 		curChar++;
 	}
-	printf("\n");
-	printf("%s\n", str);
+//	printf("\n");
+//	printf("%s\n", str);
 	return curChar;
 
 }
 
-int gsm7_to_ud(char *str, int curChar, char *out7bit)
+int gsm7_to_ud(char *str, int curChar, char startChar, char *out7bit)
 {
-	int i = 0;
-	int j = 0;
+	int i = startChar;
+	int j = startChar;
 	int shiftAt = 0;
-	for (i = 0; i < curChar; i++) {
-		if ((i > 0) && (i + 1) % 8 == 0) {
+	strncpy(out7bit, str, startChar);
+	for (i; i < curChar; i++) {
+		if ((i - startChar > 0) && (i - startChar + 1) % 8 == 0) {
 			shiftAt = 0;
 			continue;
 		}
@@ -615,7 +750,7 @@ int parse_input(char *hexString)
 		memset(out7bit, 0, curChar);
 		printf("7-bit GSM\n");
 		printf("TP-DCS: 0x00\n");
-		j = gsm7_to_ud(str, curChar, out7bit);
+		j = gsm7_to_ud(str, curChar, 0, out7bit);
 		printf("TP-UDL: 0x%02X\n", len);
 		printf("TP-UD: 0x");
 		for (i = 0; i < j; i++) {
